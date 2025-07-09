@@ -46,17 +46,44 @@ def generate_test_emails(policy_text, store_name, order_number, language, num_em
     # Get the correct prompt template for the selected language, default to English if not found
     prompt_template = prompt_templates.get(language, prompt_templates['English'])
     
+    # Add specific JSON format instruction
+    json_format_instruction = """
+    
+    IMPORTANT: Return ONLY a JSON array in this exact format:
+    [
+      {
+        "subject": "Clear email subject here",
+        "body": "Email content here"
+      },
+      {
+        "subject": "Another clear subject",
+        "body": "Another email content"
+      }
+    ]
+    """
+    
     # Format the prompt with the provided details
     prompt = prompt_template.format(
         store_name=store_name,
         order_number=order_number,
         num_emails=num_emails,
         policy_text=policy_text
-    )
+    ) + json_format_instruction
 
     try:
         response = model.generate_content(prompt)
-        cleaned_response = response.text.strip().lstrip("```json").rstrip("```")
+        cleaned_response = response.text.strip()
+        # Remove any markdown formatting
+        if cleaned_response.startswith("```json"):
+            cleaned_response = cleaned_response[7:]
+        if cleaned_response.endswith("```"):
+            cleaned_response = cleaned_response[:-3]
+        cleaned_response = cleaned_response.strip()
+        
+        # Debug: show what we got from AI
+        st.write("🔍 Debug - AI Response:")
+        st.code(cleaned_response, language="json")
+        
         return cleaned_response
     except Exception as e:
         st.error(f"An error occurred while communicating with the Gemini API: {e}")
@@ -129,25 +156,55 @@ if uploaded_files:
             if generated_json_str:
                 try:
                     emails_to_send = json.loads(generated_json_str)
-                    st.success(f"✅ Gemini generated {len(emails_to_send)} emails. Starting dispatch...")
+                    
+                    # Validate the structure
+                    if not isinstance(emails_to_send, list):
+                        st.error("❌ Invalid response format: Expected a list of emails")
+                        return
+                    
+                    # Check if emails have proper structure
+                    valid_emails = []
+                    for email in emails_to_send:
+                        if isinstance(email, dict) and "subject" in email and "body" in email:
+                            if email["subject"] and email["subject"].strip():
+                                valid_emails.append(email)
+                            else:
+                                st.warning(f"⚠️ Skipping email with empty subject: {email}")
+                        else:
+                            st.warning(f"⚠️ Skipping invalid email structure: {email}")
+                    
+                    if not valid_emails:
+                        st.error("❌ No valid emails found in the AI response")
+                        return
+                    
+                    st.success(f"✅ Found {len(valid_emails)} valid emails. Starting dispatch...")
                     
                     progress_bar = st.progress(0, text="Sending...")
-                    for i, email_data in enumerate(emails_to_send):
-                        subject = email_data.get("subject", "No subject")
-                        body = email_data.get("body", "No content")
+                    sent_count = 0
+                    
+                    for i, email_data in enumerate(valid_emails):
+                        subject = email_data["subject"].strip()
+                        body = email_data["body"].strip()
+                        
+                        st.write(f"📧 Attempting to send: *{subject}*")
                         
                         if send_email(subject, body, customer_service_email):
-                            st.write(f"✔️ Sent: *{subject}*")
+                            st.write(f"✔️ Successfully sent: *{subject}*")
+                            sent_count += 1
                         else:
-                            st.write(f"❌ Sending error.")
+                            st.write(f"❌ Failed to send: *{subject}*")
                         
-                        progress_bar.progress((i + 1) / len(emails_to_send), text=f"Sending email {i+1}/{len(emails_to_send)}")
+                        progress_bar.progress((i + 1) / len(valid_emails), text=f"Sending email {i+1}/{len(valid_emails)}")
 
-                    st.balloons()
-                    st.success("🎉 All emails have been sent!")
+                    if sent_count > 0:
+                        st.balloons()
+                        st.success(f"🎉 Successfully sent {sent_count} out of {len(valid_emails)} emails!")
+                    else:
+                        st.error("❌ Failed to send any emails")
                     
-                except json.JSONDecodeError:
-                    st.error("Critical Error: The response from the AI is not in a valid JSON format.")
+                except json.JSONDecodeError as e:
+                    st.error(f"Critical Error: The response from the AI is not in a valid JSON format: {e}")
+                    st.write("Raw response from AI:")
                     st.code(generated_json_str, language="text")
 else:
     st.info("Upload policy files in Step 2 to continue.")
