@@ -160,7 +160,7 @@ if uploaded_files:
                     # Validate the structure
                     if not isinstance(emails_to_send, list):
                         st.error("❌ Invalid response format: Expected a list of emails")
-                        return
+                        st.stop()
                     
                     # Check if emails have proper structure
                     valid_emails = []
@@ -175,7 +175,7 @@ if uploaded_files:
                     
                     if not valid_emails:
                         st.error("❌ No valid emails found in the AI response")
-                        return
+                        st.stop()
                     
                     st.success(f"✅ Found {len(valid_emails)} valid emails. Starting dispatch...")
                     
